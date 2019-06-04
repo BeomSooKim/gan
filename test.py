@@ -1,124 +1,205 @@
 #%%
-from keras.layers import Dense, Input, Dropout, Flatten, Reshape, BatchNormalization
-from keras.models import Model, Sequential
-from keras.layers.advanced_activations import LeakyReLU
-from keras.optimizers import Adam
 import numpy as np
-from keras.datasets import mnist
+
+
 import matplotlib.pyplot as plt
-#%%
-input_shape = 784
-z_shape = 100
-z = Input(shape = (z_shape,))
-epochs = 100
-batch_size = 600
-lr = 0.0002
-def get_discriminator():
-    _input = Input(shape = (input_shape,))
-    x = Dense(128)(_input)
-    x = LeakyReLU(0.2)(x)
-    #x = Dropout(0.5)(x)
-    x = Dense(64)(x)
-    x = LeakyReLU(0.2)(x)
-    x = Dense(32)(x)
-    x = LeakyReLU(0.2)(x)
-    x = Dropout(0.5)(x)
-    x = Dense(1, activation = 'sigmoid')(x)
 
-    model = Model(_input, x)
-    model.compile(optimizer = Adam(lr = lr), loss = 'binary_crossentropy', metrics = ['accuracy'])
+from keras.datasets import cifar10
+from keras.models import Sequential, Model
+from keras.layers import Input, Dense, LeakyReLU, BatchNormalization, ReLU
+from keras.layers import Conv2D, Conv2DTranspose, Reshape, Flatten
+from keras.optimizers import Adam
+from keras import initializers
+from keras.utils import plot_model, np_utils
+from keras import backend as K
 
-    return model
-
-def get_generator(_input):
-    _input = Input(shape = (z_shape,))
-    x = Dense(64)(_input)
-    x = LeakyReLU(0.2)(x)
-    x = Dense(128)(x)
-    x = LeakyReLU(0.2)(x)
-    x = BatchNormalization(momentum = 0.8)(x)
-    x = Dense(256)(x)
-    x = LeakyReLU(0.2)(x)
-    x = BatchNormalization(momentum = 0.8)(x)
-    x = Dense(512)(x)
-    x = LeakyReLU(0.2)(x)
-    x = BatchNormalization(momentum = 0.8)(x)
-    #x = Dropout(0.5)(x)
-    x = Dense(784, activation = 'sigmoid')(x)
-
-    model = Model(_input, x)
-    return model
+(X_train, y_train), (X_test, y_test) = cifar10.load_data()
+fig = plt.figure(figsize=(8,3))
+for i in range(0, 10):
+    plt.subplot(2, 5, 1 + i, xticks=[], yticks=[])
+    plt.imshow(X_train[i])
     
-def show_image(n = 10):
-        
-    noise = np.random.normal(0, 1, (n, z_shape))
-    imgs = generator.predict(noise)
-    #imgs = imgs * 127.5 + 127.5
-    imgs = imgs * 255
-    #imgs = np.clip(imgs, 0, 255).astype(np.uint8)
-
-    _, axes = plt.subplots(2, 5, figsize = (10,2))
-    axes = axes.flatten()
-
-    for (img, ax) in zip(imgs, axes):
-        img = img.reshape((28, 28))
-        #print(img.shape)
-        ax.imshow(img, cmap = 'gray')
-    plt.show()
-
-discriminator =  get_discriminator()
-discriminator.compile(loss='binary_crossentropy',
-    optimizer=Adam(lr, 0.5),
-    metrics=['accuracy'])
+plt.tight_layout()
 #%%
-generator = get_generator(z)
+num_classes = len(np.unique(y_train))
+class_names = ['airplane','automobile','bird','cat','deer',
+               'dog','frog','horse','ship','truck']
+
+fig = plt.figure(figsize=(8,3))
+for i in range(num_classes):
+    ax = plt.subplot(2, 5, 1 + i, xticks=[], yticks=[])
+    idx = np.where(y_train[:]==i)[0]
+    features_idx = X_train[idx,::]
+    img_num = np.random.randint(features_idx.shape[0])
+    img = features_idx[img_num,::]
+    ax.set_title(class_names[i])
+    plt.imshow(img)
+    
+plt.tight_layout()
+print('X_train shape:', X_train.shape)
+print(X_train.shape[0], 'train samples')
+print(X_test.shape[0], 'test samples')
+#%%
+if K.image_data_format() == 'channels_first':
+    X_train = X_train.reshape(X_train.shape[0], 3, 32, 32)
+    X_test = X_test.reshape(X_test.shape[0], 3, 32, 32)
+    input_shape = (3, 32, 32)
+else:
+    X_train = X_train.reshape(X_train.shape[0], 32, 32, 3)
+    X_test = X_test.reshape(X_test.shape[0], 32, 32, 3)
+    input_shape = (32, 32, 3)
+    
+# convert class vectors to binary class matrices
+Y_train = np_utils.to_categorical(y_train, num_classes)
+Y_test = np_utils.to_categorical(y_test, num_classes)
+
+# the generator is using tanh activation, for which we need to preprocess 
+# the image data into the range between -1 and 1.
+
+X_train = np.float32(X_train)
+X_train = (X_train / 255 - 0.5) * 2
+X_train = np.clip(X_train, -1, 1)
+
+X_test = np.float32(X_test)
+X_test = (X_train / 255 - 0.5) * 2
+X_test = np.clip(X_test, -1, 1)
+
+print('X_train reshape:', X_train.shape)
+print('X_test reshape:', X_test.shape)
+#%%
+# latent space dimension
+latent_dim = 100
+
+init = initializers.RandomNormal(stddev=0.02)
+
+# Generator network
+generator = Sequential()
+
+# FC: 2x2x512
+generator.add(Dense(2*2*512, input_shape=(latent_dim,), kernel_initializer=init))
+generator.add(Reshape((2, 2, 512)))
+generator.add(BatchNormalization())
+generator.add(LeakyReLU(0.2))
+
+# # Conv 1: 4x4x256
+generator.add(Conv2DTranspose(256, kernel_size=5, strides=2, padding='same'))
+generator.add(BatchNormalization())
+generator.add(LeakyReLU(0.2))
+
+# Conv 2: 8x8x128
+generator.add(Conv2DTranspose(128, kernel_size=5, strides=2, padding='same'))
+generator.add(BatchNormalization())
+generator.add(LeakyReLU(0.2))
+
+# Conv 3: 16x16x64
+generator.add(Conv2DTranspose(64, kernel_size=5, strides=2, padding='same'))
+generator.add(BatchNormalization())
+generator.add(LeakyReLU(0.2))
+
+# Conv 4: 32x32x3
+generator.add(Conv2DTranspose(3, kernel_size=5, strides=2, padding='same',
+                              activation='tanh'))
+generator.summary()
+#%%
+# imagem shape 32x32x3
+img_shape = X_train[0].shape
+
+# Discriminator network
+discriminator = Sequential()
+
+# Conv 1: 16x16x64
+discriminator.add(Conv2D(64, kernel_size=5, strides=2, padding='same',
+                         input_shape=(img_shape), kernel_initializer=init))
+discriminator.add(LeakyReLU(0.2))
+
+# Conv 2:
+discriminator.add(Conv2D(128, kernel_size=5, strides=2, padding='same'))
+discriminator.add(BatchNormalization())
+discriminator.add(LeakyReLU(0.2))
+
+# Conv 3: 
+discriminator.add(Conv2D(256, kernel_size=5, strides=2, padding='same'))
+discriminator.add(BatchNormalization())
+discriminator.add(LeakyReLU(0.2))
+
+# Conv 3: 
+discriminator.add(Conv2D(512, kernel_size=5, strides=2, padding='same'))
+discriminator.add(BatchNormalization())
+discriminator.add(LeakyReLU(0.2))
+
+# FC
+discriminator.add(Flatten())
+
+# Output
+discriminator.add(Dense(1, activation='sigmoid'))
+discriminator.summary()
+#%%
+discriminator.compile(Adam(lr=0.0003, beta_1=0.5), loss='binary_crossentropy',
+                      metrics=['binary_accuracy'])
+# d_g = discriminador(generador(z))
 discriminator.trainable = False
-gan_input = Input(shape = (z_shape,))
-img = generator(gan_input)
-x = discriminator(img)
 
-adversarial = Model(gan_input, x)
-adversarial.compile(loss = 'binary_crossentropy',optimizer = Adam(lr, 0.5))
+z = Input(shape=(latent_dim,))
+img = generator(z)
+decision = discriminator(img)
+d_g = Model(inputs=z, outputs=decision)
+
+d_g.compile(Adam(lr=0.0004, beta_1=0.5), loss='binary_crossentropy',
+            metrics=['binary_accuracy'])
+d_g.summary()
+
 #%%
-(x_train, _), (_, _) = mnist.load_data()
-#x_train = (x_train - 127.5) / 127.5
-x_train = x_train / 255.0
-#x_train = np.expand_dims(x_train, axis=3)
-x_train = np.reshape(x_train, (x_train.shape[0], input_shape))
-n_data = len(x_train)
-loss_dict = {'d_loss':[],'g_loss':[]}
-for i in np.arange(epochs):
-    print ('{} epochs train start'.format(i+1))
-    for _ in np.arange(0, n_data, batch_size):
-        idx = np.random.randint(0, high = n_data, size = batch_size)
-        real_x = x_train[idx]
-        real_y = np.ones((batch_size, 1))
-        #real_y[:] = 0.9
-        # train discriminator
-        #discriminator.trainable = True
-        d_loss_real = discriminator.train_on_batch(real_x, real_y)
-        #for _ in np.arange(20):
-        z = np.random.normal(0, 1, (batch_size, z_shape))
-        fake = generator.predict_on_batch(z)
-        fake_y = np.zeros((batch_size, 1))
+epochs = 100
+batch_size = 32
+smooth = 0.1
 
-        d_loss_fake = discriminator.train_on_batch(fake, fake_y)
+real = np.ones(shape=(batch_size, 1))
+fake = np.zeros(shape=(batch_size, 1))
+
+d_loss = []
+g_loss = []
+
+for e in range(epochs + 1):
+    for i in range(len(X_train) // batch_size):
         
-        # train generator
-        #discriminator.trainable = False
-        z = np.random.normal(0, 1, (batch_size, z_shape))
-        g_loss = adversarial.train_on_batch(z, real_y)
-        d_loss = np.add(d_loss_real, d_loss_fake) * 0.5
-        loss_dict['g_loss'].append(g_loss)
-        loss_dict['d_loss'].append(d_loss[0])
-    print('generator loss :{:.4f} / discriminator loss :{:.4f}'.format(g_loss, d_loss[0]))    
-    if (i + 1) % 10 == 0:
-        show_image(n = 25)
+        # Train Discriminator weights
+        discriminator.trainable = True
+        
+        # Real samples
+        X_batch = X_train[i*batch_size:(i+1)*batch_size]
+        d_loss_real = discriminator.train_on_batch(x=X_batch,
+                                                   y=real * (1 - smooth))
+        
+        # Fake Samples
+        z = np.random.normal(loc=0, scale=1, size=(batch_size, latent_dim))
+        X_fake = generator.predict_on_batch(z)
+        d_loss_fake = discriminator.train_on_batch(x=X_fake, y=fake)
+         
+        # Discriminator loss
+        d_loss_batch = 0.5 * (d_loss_real[0] + d_loss_fake[0])
+        
+        # Train Generator weights
+        discriminator.trainable = False
+        g_loss_batch = d_g.train_on_batch(x=z, y=real)
 
+        print(
+            'epoch = %d/%d, batch = %d/%d, d_loss=%.3f, g_loss=%.3f' % (e + 1, epochs, i, len(X_train) // batch_size, d_loss_batch, g_loss_batch[0]),
+            100*' ',
+            end='\r'
+        )
+    
+    d_loss.append(d_loss_batch)
+    g_loss.append(g_loss_batch[0])
+    print('epoch = %d/%d, d_loss=%.3f, g_loss=%.3f' % (e + 1, epochs, d_loss[-1], g_loss[-1]), 100*' ')
 
-plt.style.use('seaborn')
-plt.plot(range(int(epochs * n_data / batch_size)), loss_dict['d_loss'], label = 'd_loss', )
-plt.plot(range(int(epochs * n_data / batch_size)), loss_dict['g_loss'], label = 'g_loss')
-plt.legend()
-#plt.savefig('./example.png')
-plt.show()
+    if e % 10 == 0:
+        samples = 10
+        x_fake = generator.predict(np.random.normal(loc=0, scale=1, size=(samples, latent_dim)))
+
+        for k in range(samples):
+            plt.subplot(2, 5, k + 1, xticks=[], yticks=[])
+            plt.imshow(((x_fake[k] + 1)* 127).astype(np.uint8))
+
+        plt.tight_layout()
+        plt.savefig('./test_{}.png'.format(e))
+        plt.show()

@@ -1,6 +1,8 @@
 1. GAN 
 - batchnorm 사용과, leaky relu 사용시 엄청 큰 효과를 봄(generator)
 - noise를 uniform에서 뽑냐, normal에서 뽑냐는 큰 차이를 모르겠음
+- discriminator에는 batchnorm 쓰면 안됨
+- 쓴다면 training할때 real과 fake를 각각 돌려줘야...
 2. DCGAN
 - discriminator에 batchnorm 사용하니 트레이닝 안됨
 - discriminator training 시 real과 fake를 합쳐서 하나의 배치로 밀어넣었음

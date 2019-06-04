@@ -1,9 +1,10 @@
 from keras.layers import Dense, Input, Dropout
-from keras.layers import LeakyReLU, BatchNormalization
+from keras.layers import LeakyReLU, BatchNormalization, ReLU
 from keras.models import Model
 from keras.optimizers import Adam
 import numpy as np
 from keras.datasets import mnist
+from keras import initializers
 
 import matplotlib.pyplot as plt
 
@@ -19,47 +20,45 @@ class GAN:
         self.generator = self.get_generator(z)
         
         img = self.generator(z)
-        self.discriminator.trainable = False
+        self.discriminator.trainable = False #for training G, D weight must be fixed
         fake_img = self.discriminator(img)
 
         self.adversarial = Model(z, fake_img)
         self.adversarial.compile(loss = 'binary_crossentropy',optimizer = self.optimizer)
 
-
+    # build discriminator D
     def get_discriminator(self):
         _input = Input(shape = (self.input_shape,))
-        x = Dense(128)(_input)
-        x = LeakyReLU(0.3)(x)
-        #x = Dropout(0.5)(x)
-        x = Dense(64)(x)
-        x = LeakyReLU(0.3)(x)
-        x = BatchNormalization()(x)
-        x = Dense(32)(x)
-        x = LeakyReLU(0.3)(x)
-        x = Dropout(rate = 0.5)(x)
-        x = Dense(1, activation = 'sigmoid')(x)
+        x = Dense(1024)(_input)
+        x = LeakyReLU(0.2)(x)
+        x = Dropout(0.3)(x)
+        x = Dense(512)(x)
+        #x = BatchNormalization()(x)
+        x = LeakyReLU(0.2)(x)
+        x = Dropout(0.3)(x)
+        x = Dense(256)(x)
+        #x = BatchNormalization()(x)
+        x = LeakyReLU(0.2)(x)
+        x = Dropout(0.3)(x)
+        x = Dense(1, activation = 'sigmoid')(x) # output is between 0 and 1 
 
         model = Model(_input, x)
         model.compile(optimizer = self.optimizer, loss = 'binary_crossentropy', metrics = ['accuracy'])
 
         return model
-
+    # build generator G
     def get_generator(self, _input):
         _input = Input(shape = (self.z_shape,))
-        x = Dense(64)(_input)
-        x = LeakyReLU(0.3)(x)
-        x = BatchNormalization(momentum = 0.8)(x)
-        x = Dense(128)(x)
-        x = LeakyReLU(0.3)(x)
-        x = BatchNormalization(momentum = 0.8)(x)
-        x = Dense(256)(x)
-        x = LeakyReLU(0.3)(x)
-        x = BatchNormalization(momentum = 0.8)(x)
+        x = Dense(256)(_input)
+        #x = BatchNormalization()(x)
+        x = LeakyReLU(0.2)(x)
         x = Dense(512)(x)
-        x = LeakyReLU(0.3)(x)
-        x = BatchNormalization(momentum = 0.8)(x)
-        #x = Dropout(0.5)(x)
-        x = Dense(784, activation = 'tanh')(x)
+        #x = BatchNormalization()(x)
+        x = LeakyReLU(0.2)(x)
+        x = Dense(1024)(x)
+        #x = BatchNormalization()(x)
+        x = LeakyReLU(0.2)(x)
+        x = Dense(784, activation = 'tanh')(x) # for MNIST image size
 
         model = Model(_input, x)
         return model
@@ -68,7 +67,9 @@ class GAN:
         
         noise = np.random.normal(0, 1, (np.prod(shape), self.z_shape))
         imgs = self.generator.predict(noise)
+        # decode image (0 ~ 255)
         imgs = imgs * 127.5 +127.5
+        imgs = np.clip(imgs, 0, 255).astype(np.uint8)
         imgs = imgs.reshape((np.prod(shape), 28, 28))
 
         fig, axes = plt.subplots(nrows = shape[0],ncols = shape[1], figsize = np.array(shape)[::-1]*2)
@@ -79,8 +80,9 @@ class GAN:
         fig.savefig(savepath, facecolor = 'w')
 
 
-    def train(self, epochs, batch_size, display_step, plot_shape):
+    def train(self, epochs, batch_size, display_step, plot_shape, save_path):
         (x_train, _), (_, _) = mnist.load_data()
+        # encode image
         x_train = (x_train - 127.5) / 127.5
         x_train = np.reshape(x_train, (x_train.shape[0], self.input_shape))
         n_data = len(x_train)
@@ -90,21 +92,18 @@ class GAN:
                 idx = np.random.randint(0, high = n_data, size = batch_size)
                 # train discriminator
                 real_x = x_train[idx]
-                real_y = np.ones((batch_size, 1)) - 0.05 *np.random.uniform(0, 1, (batch_size, 1))
-                
                 z = np.random.normal(0, 1, (batch_size, self.z_shape))
                 fake_x = self.generator.predict_on_batch(z)
-                fake_y = np.zeros((batch_size, 1)) + 0.05 *np.random.uniform(0, 1, (batch_size, 1))
-
-                #all_x = np.concatenate((real_x, fake_x))
-                #all_y = np.concatenate((real_y, fake_y))
-                #d_loss = self.discriminator.train_on_batch(all_x, all_y)
-                d_loss1 = self.discriminator.train_on_batch(real_x, real_y)
-                d_loss2 = self.discriminator.train_on_batch(fake_x, fake_y)
-                d_loss = np.add(d_loss1, d_loss2) * 0.5
+                all_x = np.concatenate((real_x, fake_x))
+                all_y = np.zeros(2*batch_size)
+                all_y[:batch_size] = 1 #for gradient, set real label to 0.9
+                
+                d_loss = self.discriminator.train_on_batch(real_x, real_y)
+                d_loss = self.discriminator.train_on_batch(fake_x, fake_y)
+                
                 #train generator
                 z = np.random.normal(0, 1, (batch_size, self.z_shape))
-                g_loss = self.adversarial.train_on_batch(z, real_y)
+                g_loss = self.adversarial.train_on_batch(z, np.ones((batch_size, 1)))
 
                 loss_dict['d_loss'].append(d_loss[0])
                 loss_dict['d_acc'].append(d_loss[1])
@@ -113,7 +112,7 @@ class GAN:
             print('{} epoch status :gen_loss = {:.4f} / disc_loss = {:.4f}'\
                .format(i+1, g_loss, d_loss[0]))
             if (i + 1) % display_step == 0:
-                self.show_image("D:\\study\\4.experiments\\GAN\\images\\{}epoch.png".format(i+1), plot_shape)
+                self.show_image(save_path.format(i+1), plot_shape)
         return loss_dict
 
 
